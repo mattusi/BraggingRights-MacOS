@@ -8,14 +8,17 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var viewModel = AppViewModel()
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        HSplitView {
+            // Left Panel - Options
+            OptionsPanel(viewModel: viewModel)
+            
+            // Right Panel - Document Preview
+            DocumentPreview(viewModel: viewModel)
         }
-        .padding()
+        .frame(minWidth: 900, minHeight: 600)
     }
 }
 
