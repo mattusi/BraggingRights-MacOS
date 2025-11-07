@@ -35,64 +35,64 @@ struct SlackMessageParser {
                 var dateLine: String?
                 var messageStartIndex: Int?
                 
-                // Skip empty lines and find channel
-                var foundIndicatorLine = false
+                // Skip initial empty lines and find channel
                 while j < lines.count {
                     let nextLine = lines[j].trimmingCharacters(in: .whitespacesAndNewlines)
                     let rawLine = lines[j]
                     
-                    // Check if this is the indicator line (line with spaces or prefix)
-                    if !foundIndicatorLine && j == i + 1 {
-                        // This should be the line after author - check if it's an indicator
-                        if rawLine.hasPrefix(" ") || rawLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            foundIndicatorLine = true
-                            
-                            // Check if it contains "Direct Message" or "Thread in"
+                    // Skip empty lines at the beginning
+                    if nextLine.isEmpty && channelLine == nil {
+                        j += 1
+                        continue
+                    }
+                    
+                    // If we haven't found the channel yet, look for channel indicator
+                    if channelLine == nil {
+                        // Accept lines with or without leading spaces as potential channel lines
+                        if !nextLine.isEmpty {
+                            // Check if it contains "Direct Message" - this line IS the channel
                             if nextLine.contains("Direct Message") {
                                 channelLine = nextLine
                                 j += 1
                                 continue
                             } else if nextLine.contains("Thread in") {
-                                // Next line will be the channel name
+                                // Next non-empty line will be the channel name
                                 j += 1
-                                if j < lines.count {
+                                while j < lines.count {
                                     let channelName = lines[j].trimmingCharacters(in: .whitespacesAndNewlines)
                                     if !channelName.isEmpty {
                                         channelLine = channelName
+                                        break
                                     }
+                                    j += 1
                                 }
                                 j += 1
                                 continue
                             } else {
-                                // Regular channel message - next line is channel name
+                                // This is the channel name (e.g., "ajo-brazucas", "Clara Aguiar Benedett and Mateus Vagner")
+                                channelLine = nextLine
                                 j += 1
-                                if j < lines.count {
-                                    let potentialChannel = lines[j].trimmingCharacters(in: .whitespacesAndNewlines)
-                                    // Make sure it's not a date line
-                                    if !potentialChannel.isEmpty && !isDateLine(potentialChannel) {
-                                        channelLine = potentialChannel
-                                        j += 1
-                                        continue
-                                    }
-                                }
+                                continue
                             }
                         }
                     }
                     
-                    if nextLine.isEmpty {
-                        j += 1
-                        continue
-                    }
-                    
-                    // Check if it's a date line (contains " at " and looks like a date)
-                    if channelLine != nil && dateLine == nil && nextLine.contains(" at ") && isDateLine(nextLine) {
-                        dateLine = nextLine
-                        messageStartIndex = j + 1
-                        break
-                    }
-                    
-                    // If we found channel but next line doesn't look like date or channel, break
+                    // If we already have channel, look for date line
                     if channelLine != nil {
+                        // Skip empty lines
+                        if nextLine.isEmpty {
+                            j += 1
+                            continue
+                        }
+                        
+                        // Check if it's a date line (contains " at " and looks like a date)
+                        if dateLine == nil && nextLine.contains(" at ") && isDateLine(nextLine) {
+                            dateLine = nextLine
+                            messageStartIndex = j + 1
+                            break
+                        }
+                        
+                        // If we found channel but this line doesn't look like date, break
                         break
                     }
                     
@@ -157,20 +157,37 @@ struct SlackMessageParser {
                     // Filter out image attachments, link previews, and metadata lines
                     let cleanedMessage = messageText
                         .components(separatedBy: "\n")
-                        .filter { line in
+                        .compactMap { line in
                             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                            // Filter out common non-message content
-                            return !trimmed.hasPrefix("IMG_") 
-                                && !trimmed.hasPrefix("Screenshot ")
-                                && !trimmed.hasPrefix("Image from ")
-                                && !trimmed.contains("Shared by")
-                                && !trimmed.contains("Show more")
-                                && !trimmed.hasSuffix(".png")
-                                && !trimmed.hasSuffix(".jpg")
-                                && !trimmed.hasSuffix(".jpeg")
-                                && !trimmed.hasSuffix(".gif")
-                                // Filter out duplicate link preview titles (e.g., "YouTubeYouTube")
-                                && !isLinkPreviewDuplicate(trimmed)
+                            
+                            // Filter out common non-message content (complete lines only)
+                            if trimmed.hasPrefix("IMG_") 
+                                || trimmed.hasPrefix("Screenshot ")
+                                || trimmed.hasPrefix("Image from ")
+                                || trimmed.contains("Shared by")
+                                || trimmed.hasSuffix(".png")
+                                || trimmed.hasSuffix(".jpg")
+                                || trimmed.hasSuffix(".jpeg")
+                                || trimmed.hasSuffix(".gif")
+                                || isLinkPreviewDuplicate(trimmed)
+                                || isReactionLine(trimmed) {
+                                return nil
+                            }
+                            
+                            // Remove "Show more (edited)" suffix but keep the message content
+                            var cleaned = trimmed
+                            if cleaned.hasSuffix("Show more (edited)") {
+                                cleaned = cleaned.replacingOccurrences(of: " Show more (edited)", with: "")
+                            } else if cleaned.hasSuffix("Show more") {
+                                cleaned = cleaned.replacingOccurrences(of: " Show more", with: "")
+                            }
+                            
+                            // If after cleanup the line is empty, filter it out
+                            if cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                return nil
+                            }
+                            
+                            return cleaned
                         }
                         .joined(separator: "\n")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -210,6 +227,20 @@ struct SlackMessageParser {
         
         return line.range(of: datePatternWithYear, options: .regularExpression) != nil ||
                line.range(of: datePatternWithoutYear, options: .regularExpression) != nil
+    }
+    
+    private static func isReactionLine(_ line: String) -> Bool {
+        // Detect reaction count lines (standalone numbers that appear after reactions)
+        // Note: We don't filter standalone emojis because they could be actual message content
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Check if it's just a small number (reaction count on separate line)
+        // Reaction counts are typically single or double digit numbers
+        if let _ = Int(trimmed), trimmed.count <= 2 {
+            return true
+        }
+        
+        return false
     }
     
     private static func isLinkPreviewDuplicate(_ line: String) -> Bool {

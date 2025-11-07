@@ -78,9 +78,16 @@ struct ModelListResponse: Codable {
 class APIService {
     private let baseURL = "https://api.fuelix.ai"
     private var apiKey: String
+    private let chatCompletionSession: URLSession
     
     init(apiKey: String) {
         self.apiKey = apiKey
+        
+        // Configure URLSession with 5-minute timeout for chat completions
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 300 // 5 minutes
+        configuration.timeoutIntervalForResource = 300 // 5 minutes
+        self.chatCompletionSession = URLSession(configuration: configuration)
     }
     
     func updateAPIKey(_ key: String) {
@@ -103,7 +110,7 @@ class APIService {
         request.httpBody = try JSONEncoder().encode(requestBody)
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await chatCompletionSession.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse

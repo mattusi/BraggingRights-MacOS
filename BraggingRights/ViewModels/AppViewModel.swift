@@ -235,7 +235,7 @@ class AppViewModel: ObservableObject {
                 // Filter to only show models with 128k+ context window
                 let largeContextModels = models
                     .map { $0.id }
-                    .filter { ModelInfo.hasLargeContext(modelId: $0, minimumTokens: 128000) }
+                    //.filter { ModelInfo.hasLargeContext(modelId: $0, minimumTokens: 128000) }
                 
                 // If no large context models found, show all models (API might have new ones)
                 if largeContextModels.isEmpty {

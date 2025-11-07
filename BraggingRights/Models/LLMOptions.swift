@@ -12,17 +12,22 @@ struct LLMOptions {
     var modelName: String? = nil // Actual model ID from API
     var promptTemplate: String = """
     Based on the following Slack messages, create a professional brag document highlighting achievements, contributions, and impact.
-    
+
     Format the document with:
+    - Date range of the accomplishments
     - A summary of key accomplishments
     - Specific examples of technical contributions
     - Evidence of collaboration and teamwork
     - Impact on projects and team
-    
+    - Do a week by week summary of the accomplishments
+    - In the weekly summary include team members interacted 
+    - Add events and work travels
+
     Messages:
     {messages}
-    
+
     Please create a well-structured markdown document.
+    Only respond with the document.
     """
     var temperature: Double = 0.7
     var maxTokens: Int = 16000 // Increased for large documents
