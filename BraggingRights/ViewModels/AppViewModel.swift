@@ -21,6 +21,12 @@ class AppViewModel: ObservableObject {
     @Published var availableModels: [String] = []
     
     private var apiService: APIService?
+    private let keychainService = KeychainService.shared
+    
+    init() {
+        // Load API key from keychain on initialization
+        loadAPIKeyFromKeychain()
+    }
     
     // Computed property for markdown preview
     var markdownPreview: String {
@@ -85,18 +91,48 @@ class AppViewModel: ObservableObject {
         errorMessage = nil
     }
     
-    // Update API key
+    // Load API key from keychain
+    private func loadAPIKeyFromKeychain() {
+        do {
+            let key = try keychainService.getAPIKey()
+            apiKey = key
+            if !key.isEmpty {
+                apiService = APIService(apiKey: key)
+                // Optionally fetch available models
+                Task {
+                    await fetchModels()
+                }
+            }
+        } catch KeychainError.itemNotFound {
+            // No API key stored yet, this is normal on first launch
+            apiKey = ""
+        } catch {
+            // Log error but don't block initialization
+            print("Error loading API key from keychain: \(error.localizedDescription)")
+            apiKey = ""
+        }
+    }
+    
+    // Update API key and save to keychain
     func updateAPIKey(_ key: String) {
         apiKey = key
-        if !key.isEmpty {
-            apiService = APIService(apiKey: key)
-            // Optionally fetch available models
-            Task {
-                await fetchModels()
+        
+        // Save to keychain
+        do {
+            if !key.isEmpty {
+                try keychainService.updateAPIKey(key)
+                apiService = APIService(apiKey: key)
+                // Optionally fetch available models
+                Task {
+                    await fetchModels()
+                }
+            } else {
+                try keychainService.deleteAPIKey()
+                apiService = nil
+                availableModels = []
             }
-        } else {
-            apiService = nil
-            availableModels = []
+        } catch {
+            errorMessage = "Failed to save API key: \(error.localizedDescription)"
         }
     }
     
