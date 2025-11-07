@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct SlackMessage: Identifiable, Codable {
+struct SlackMessage: Identifiable, Codable, Hashable {
     let id: String
     let text: String
     let timestamp: Date
@@ -16,6 +16,7 @@ struct SlackMessage: Identifiable, Codable {
     let channel: String
     let channelId: String
     let permalink: String?
+    var sessionId: String? // Track which import session this message belongs to
     
     init(id: String = UUID().uuidString, 
          text: String, 
@@ -24,7 +25,8 @@ struct SlackMessage: Identifiable, Codable {
          authorId: String, 
          channel: String, 
          channelId: String,
-         permalink: String? = nil) {
+         permalink: String? = nil,
+         sessionId: String? = nil) {
         self.id = id
         self.text = text
         self.timestamp = timestamp
@@ -33,6 +35,7 @@ struct SlackMessage: Identifiable, Codable {
         self.channel = channel
         self.channelId = channelId
         self.permalink = permalink
+        self.sessionId = sessionId
     }
 }
 

@@ -185,7 +185,7 @@ struct OptionsPanel: View {
                     .disabled(viewModel.parsedMessages.isEmpty || viewModel.apiKey.isEmpty || viewModel.isLoading)
                     
                     Button(action: {
-                        viewModel.clearData()
+                        viewModel.clearAllData()
                     }) {
                         Text("Clear All")
                             .frame(maxWidth: .infinity)
