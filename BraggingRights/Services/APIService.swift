@@ -209,5 +209,104 @@ class APIService {
         // Call the API
         return try await createChatCompletion(messages: chatMessages, model: selectedModel)
     }
+    
+    func generateSummary(messages: [SlackMessage], timePeriod: TimePeriod, existingSummaryId: String? = nil, modelName: String? = nil) async throws -> MessageSummary {
+        guard !messages.isEmpty else {
+            throw APIError.serverError("No messages to summarize")
+        }
+        
+        // Format the Slack messages for the prompt
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+        
+        var formattedMessages = ""
+        for message in messages.sorted(by: { $0.timestamp < $1.timestamp }) {
+            formattedMessages += "[\(dateFormatter.string(from: message.timestamp))] "
+            formattedMessages += "\(message.author) in \(message.channel):\n"
+            formattedMessages += "\(message.text)\n\n"
+        }
+        
+        // Create summarization prompt
+        let promptTemplate = """
+        Summarize the following Slack messages for a \(timePeriod.rawValue.lowercased()) period.
+        
+        Focus on:
+        - Key accomplishments and achievements
+        - Technical contributions and implementations
+        - Collaboration and teamwork
+        - Problem-solving and decision-making
+        - Project milestones and progress
+        - Team interactions and people mentioned
+        
+        Be concise but preserve important details. Use bullet points where appropriate.
+        The summary will be used later to generate a comprehensive brag document.
+        
+        Messages:
+        \(formattedMessages)
+        
+        Provide a well-structured summary in markdown format.
+        """
+        
+        let chatMessages = [
+            ChatMessage(role: "system", content: "You are an expert at analyzing and summarizing professional communications. Create concise, information-dense summaries that preserve key accomplishments and interactions."),
+            ChatMessage(role: "user", content: promptTemplate)
+        ]
+        
+        // Use provided model or default to gpt-4
+        let selectedModel = modelName ?? "gpt-4"
+        
+        // Call the API
+        let summaryText = try await createChatCompletion(messages: chatMessages, model: selectedModel)
+        
+        // Create the summary object
+        let sortedMessages = messages.sorted { $0.timestamp < $1.timestamp }
+        let dateRangeStart = sortedMessages.first?.timestamp ?? Date()
+        let dateRangeEnd = sortedMessages.last?.timestamp ?? Date()
+        let messageIds = messages.map { $0.id }
+        
+        return MessageSummary(
+            id: existingSummaryId ?? UUID().uuidString,
+            timePeriod: timePeriod,
+            dateRangeStart: dateRangeStart,
+            dateRangeEnd: dateRangeEnd,
+            messageIds: messageIds,
+            summaryText: summaryText,
+            generatedAt: Date()
+        )
+    }
+    
+    func generateBragDocumentFromSummaries(summaries: [MessageSummary], promptTemplate: String, modelName: String? = nil) async throws -> String {
+        guard !summaries.isEmpty else {
+            throw APIError.serverError("No summaries to process")
+        }
+        
+        // Format the summaries for the prompt
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        
+        var formattedSummaries = ""
+        for summary in summaries.sorted(by: { $0.dateRangeStart < $1.dateRangeStart }) {
+            formattedSummaries += "## \(summary.timePeriod.rawValue): \(summary.dateRangeDescription)\n"
+            formattedSummaries += "(\(summary.messageCount) messages)\n\n"
+            formattedSummaries += "\(summary.summaryText)\n\n"
+            formattedSummaries += "---\n\n"
+        }
+        
+        // Replace placeholder in template
+        let fullPrompt = promptTemplate.replacingOccurrences(of: "{messages}", with: formattedSummaries)
+        
+        // Create chat messages
+        let chatMessages = [
+            ChatMessage(role: "system", content: "You are a professional technical writer who helps create brag documents from time-based summaries of work. Focus on synthesizing the summaries into a coherent narrative highlighting achievements, contributions, and impact."),
+            ChatMessage(role: "user", content: fullPrompt)
+        ]
+        
+        // Use provided model or default to gpt-4
+        let selectedModel = modelName ?? "gpt-4"
+        
+        // Call the API
+        return try await createChatCompletion(messages: chatMessages, model: selectedModel)
+    }
 }
 

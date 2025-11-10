@@ -30,12 +30,23 @@ enum PersistenceError: Error, LocalizedError {
 struct AppData: Codable {
     var messages: [SlackMessage]
     var sessions: [SyncSession]
+    var summaries: [MessageSummary]
     var lastUpdated: Date
     
-    init(messages: [SlackMessage] = [], sessions: [SyncSession] = []) {
+    init(messages: [SlackMessage] = [], sessions: [SyncSession] = [], summaries: [MessageSummary] = []) {
         self.messages = messages
         self.sessions = sessions
+        self.summaries = summaries
         self.lastUpdated = Date()
+    }
+    
+    // Custom decoding to handle missing summaries field in old data
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        messages = try container.decode([SlackMessage].self, forKey: .messages)
+        sessions = try container.decode([SyncSession].self, forKey: .sessions)
+        summaries = try container.decodeIfPresent([MessageSummary].self, forKey: .summaries) ?? []
+        lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
 }
 
@@ -110,10 +121,11 @@ class PersistenceManager {
     
     // MARK: - Convenience Methods
     
-    func saveMessages(_ messages: [SlackMessage], sessions: [SyncSession]) throws {
+    func saveMessages(_ messages: [SlackMessage], sessions: [SyncSession], summaries: [MessageSummary] = []) throws {
         var appData = (try? loadData()) ?? AppData()
         appData.messages = messages
         appData.sessions = sessions
+        appData.summaries = summaries
         appData.lastUpdated = Date()
         try saveData(appData)
     }

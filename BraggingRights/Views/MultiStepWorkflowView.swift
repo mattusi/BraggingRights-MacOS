@@ -10,7 +10,8 @@ import SwiftUI
 enum WorkflowStep: Int, CaseIterable {
     case importMessages = 0
     case manageLibrary = 1
-    case generateDocument = 2
+    case summarizeMessages = 2
+    case generateDocument = 3
     
     var title: String {
         switch self {
@@ -18,6 +19,8 @@ enum WorkflowStep: Int, CaseIterable {
             return "Import Messages"
         case .manageLibrary:
             return "Message Library"
+        case .summarizeMessages:
+            return "Summarize Messages"
         case .generateDocument:
             return "Generate Document"
         }
@@ -29,6 +32,8 @@ enum WorkflowStep: Int, CaseIterable {
             return "square.and.arrow.down"
         case .manageLibrary:
             return "books.vertical"
+        case .summarizeMessages:
+            return "list.bullet.rectangle"
         case .generateDocument:
             return "doc.text.magnifyingglass"
         }
@@ -56,6 +61,9 @@ struct MultiStepWorkflowView: View {
                 
                 MessageLibraryView(viewModel: viewModel)
                     .tag(WorkflowStep.manageLibrary)
+                
+                MessageSummarizationView(viewModel: viewModel)
+                    .tag(WorkflowStep.summarizeMessages)
                 
                 GenerateDocumentView(viewModel: viewModel)
                     .tag(WorkflowStep.generateDocument)
@@ -326,6 +334,50 @@ struct GenerateDocumentView: View {
                     }
                     
                     Divider()
+                    
+                    // Data Source Toggle
+                    if !viewModel.messageSummaries.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Data Source")
+                                .font(.headline)
+                            
+                            Toggle(isOn: $viewModel.useSummariesForGeneration) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Use Summarized Messages")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                    
+                                    if viewModel.useSummariesForGeneration {
+                                        let summaryCount = viewModel.messageSummaries.count
+                                        let messageCount = Set(viewModel.messageSummaries.flatMap { $0.messageIds }).count
+                                        Text("Using \(summaryCount) \(summaryCount == 1 ? "summary" : "summaries") covering \(messageCount) messages")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    } else {
+                                        Text("Using all \(viewModel.allMessages.count) messages directly")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .toggleStyle(.switch)
+                            
+                            if viewModel.useSummariesForGeneration {
+                                HStack {
+                                    Image(systemName: "info.circle")
+                                        .foregroundColor(.blue)
+                                    Text("Summaries help manage large message sets and reduce context size")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(8)
+                                .background(Color.blue.opacity(0.1))
+                                .cornerRadius(6)
+                            }
+                        }
+                        
+                        Divider()
+                    }
                     
                     // LLM Options
                     VStack(alignment: .leading, spacing: 12) {

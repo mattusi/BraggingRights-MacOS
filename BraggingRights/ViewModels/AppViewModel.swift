@@ -23,9 +23,18 @@ class AppViewModel: ObservableObject {
     @Published var availableModels: [String] = []
     @Published var statistics: DataStatistics?
     
+    // Summarization properties
+    @Published var messageSummaries: [MessageSummary] = []
+    @Published var selectedTimePeriod: TimePeriod = .week
+    @Published var useSummariesForGeneration: Bool = false
+    @Published var isSummarizing: Bool = false
+    @Published var summariesGenerated: Int = 0
+    @Published var totalSummariesToGenerate: Int = 0
+    
     private var apiService: APIService?
     private let keychainService = KeychainService.shared
     private let persistenceManager = PersistenceManager.shared
+    private var summaryGenerationTask: Task<Void, Never>?
     
     init() {
         // Load API key from keychain on initialization
@@ -284,11 +293,23 @@ class AppViewModel: ObservableObject {
         
         Task {
             do {
-                let document = try await service.generateBragDocument(
-                    from: allMessages,
-                    promptTemplate: llmOptions.promptTemplate,
-                    modelName: llmOptions.modelName
-                )
+                let document: String
+                
+                if useSummariesForGeneration && !messageSummaries.isEmpty {
+                    // Use summaries instead of full messages
+                    document = try await service.generateBragDocumentFromSummaries(
+                        summaries: messageSummaries,
+                        promptTemplate: llmOptions.promptTemplate,
+                        modelName: llmOptions.modelName
+                    )
+                } else {
+                    // Use full messages
+                    document = try await service.generateBragDocument(
+                        from: allMessages,
+                        promptTemplate: llmOptions.promptTemplate,
+                        modelName: llmOptions.modelName
+                    )
+                }
                 
                 await MainActor.run {
                     documentMarkdown = document
@@ -310,6 +331,7 @@ class AppViewModel: ObservableObject {
             let appData = try persistenceManager.loadData()
             allMessages = appData.messages
             syncSessions = appData.sessions
+            messageSummaries = appData.summaries
             updateStatistics()
         } catch {
             // No saved data or error loading - start fresh
@@ -319,7 +341,7 @@ class AppViewModel: ObservableObject {
     
     private func saveData() {
         do {
-            try persistenceManager.saveMessages(allMessages, sessions: syncSessions)
+            try persistenceManager.saveMessages(allMessages, sessions: syncSessions, summaries: messageSummaries)
         } catch {
             errorMessage = "Failed to save data: \(error.localizedDescription)"
         }
@@ -392,24 +414,240 @@ class AppViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Message Summarization
+    
+    func getMessageGroupCount(for timePeriod: TimePeriod) -> Int? {
+        guard !allMessages.isEmpty else { return nil }
+        let groups = groupMessagesByTimePeriod(timePeriod)
+        return groups.count
+    }
+    
+    private func groupMessagesByTimePeriod(_ timePeriod: TimePeriod) -> [[SlackMessage]] {
+        let sortedMessages = allMessages.sorted { $0.timestamp < $1.timestamp }
+        var groups: [[SlackMessage]] = []
+        var currentGroup: [SlackMessage] = []
+        var currentPeriodStart: Date?
+        
+        let calendar = Calendar.current
+        
+        for message in sortedMessages {
+            if let periodStart = currentPeriodStart {
+                let shouldStartNewGroup: Bool
+                
+                switch timePeriod {
+                case .day:
+                    shouldStartNewGroup = !calendar.isDate(message.timestamp, inSameDayAs: periodStart)
+                case .week:
+                    let periodWeek = calendar.component(.weekOfYear, from: periodStart)
+                    let messageWeek = calendar.component(.weekOfYear, from: message.timestamp)
+                    let periodYear = calendar.component(.year, from: periodStart)
+                    let messageYear = calendar.component(.year, from: message.timestamp)
+                    shouldStartNewGroup = (periodWeek != messageWeek) || (periodYear != messageYear)
+                case .month:
+                    let periodMonth = calendar.component(.month, from: periodStart)
+                    let messageMonth = calendar.component(.month, from: message.timestamp)
+                    let periodYear = calendar.component(.year, from: periodStart)
+                    let messageYear = calendar.component(.year, from: message.timestamp)
+                    shouldStartNewGroup = (periodMonth != messageMonth) || (periodYear != messageYear)
+                }
+                
+                if shouldStartNewGroup {
+                    if !currentGroup.isEmpty {
+                        groups.append(currentGroup)
+                    }
+                    currentGroup = [message]
+                    currentPeriodStart = message.timestamp
+                } else {
+                    currentGroup.append(message)
+                }
+            } else {
+                currentGroup = [message]
+                currentPeriodStart = message.timestamp
+            }
+        }
+        
+        // Add the last group
+        if !currentGroup.isEmpty {
+            groups.append(currentGroup)
+        }
+        
+        return groups
+    }
+    
+    func generateAllSummaries() {
+        guard let service = apiService else {
+            errorMessage = "Please configure your API key first."
+            return
+        }
+        
+        guard !allMessages.isEmpty else {
+            errorMessage = "No messages to summarize. Please import messages first."
+            return
+        }
+        
+        // Cancel any existing summarization task
+        summaryGenerationTask?.cancel()
+        
+        isSummarizing = true
+        errorMessage = nil
+        summariesGenerated = 0
+        
+        let groups = groupMessagesByTimePeriod(selectedTimePeriod)
+        totalSummariesToGenerate = groups.count
+        
+        // Clear existing summaries for this time period
+        messageSummaries.removeAll { $0.timePeriod == selectedTimePeriod }
+        
+        summaryGenerationTask = Task {
+            // Process summaries with max 3 concurrent requests
+            await withTaskGroup(of: (Int, MessageSummary?).self) { group in
+                var activeTaskCount = 0
+                let maxConcurrentTasks = 3
+                
+                for (index, messages) in groups.enumerated() {
+                    // Wait if we have too many active tasks
+                    while activeTaskCount >= maxConcurrentTasks {
+                        if let (_, result) = await group.next() {
+                            activeTaskCount -= 1
+                            if let summary = result {
+                                await MainActor.run {
+                                    messageSummaries.append(summary)
+                                    summariesGenerated += 1
+                                    saveData()
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Check if task was cancelled
+                    if Task.isCancelled {
+                        break
+                    }
+                    
+                    activeTaskCount += 1
+                    group.addTask {
+                        do {
+                            let summary = try await service.generateSummary(
+                                messages: messages,
+                                timePeriod: self.selectedTimePeriod,
+                                modelName: self.llmOptions.modelName
+                            )
+                            return (index, summary)
+                        } catch {
+                            print("Failed to generate summary for group \(index): \(error)")
+                            return (index, nil)
+                        }
+                    }
+                }
+                
+                // Collect remaining results
+                for await (_, result) in group {
+                    if let summary = result {
+                        await MainActor.run {
+                            messageSummaries.append(summary)
+                            summariesGenerated += 1
+                            saveData()
+                        }
+                    }
+                }
+            }
+            
+            await MainActor.run {
+                isSummarizing = false
+                let successCount = messageSummaries.filter({ $0.timePeriod == selectedTimePeriod }).count
+                if successCount == 0 {
+                    errorMessage = "Failed to generate summaries. Please verify your API key is valid and you have access to the selected model (\(llmOptions.modelName ?? "default"))."
+                } else if successCount < totalSummariesToGenerate {
+                    errorMessage = "Generated \(successCount) of \(totalSummariesToGenerate) summaries. Some failed - check API key and model access."
+                }
+            }
+        }
+    }
+    
+    func refreshSummary(summaryId: String) {
+        guard let service = apiService else {
+            errorMessage = "Please configure your API key first."
+            return
+        }
+        
+        guard let summaryIndex = messageSummaries.firstIndex(where: { $0.id == summaryId }) else {
+            return
+        }
+        
+        let summary = messageSummaries[summaryIndex]
+        let messages = allMessages.filter { summary.messageIds.contains($0.id) }
+        
+        guard !messages.isEmpty else {
+            errorMessage = "No messages found for this summary."
+            return
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                let updatedSummary = try await service.generateSummary(
+                    messages: messages,
+                    timePeriod: summary.timePeriod,
+                    existingSummaryId: summary.id,
+                    modelName: llmOptions.modelName
+                )
+                
+                await MainActor.run {
+                    messageSummaries[summaryIndex] = updatedSummary
+                    saveData()
+                    isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Failed to refresh summary: \(error.localizedDescription)"
+                    isLoading = false
+                }
+            }
+        }
+    }
+    
+    func deleteSummary(summaryId: String) {
+        messageSummaries.removeAll { $0.id == summaryId }
+        saveData()
+    }
+    
+    func clearAllSummaries() {
+        messageSummaries.removeAll()
+        saveData()
+    }
+    
     // MARK: - Export/Import
     
     func exportData(to url: URL) {
+        errorMessage = nil
         do {
             try persistenceManager.exportToURL(url)
+            // Success feedback - could be displayed in the UI
+            print("Successfully exported data to \(url.lastPathComponent)")
         } catch {
             errorMessage = "Failed to export data: \(error.localizedDescription)"
         }
     }
     
     func importData(from url: URL) {
+        errorMessage = nil
+        isLoading = true
+        
         do {
             let appData = try persistenceManager.importFromURL(url)
             allMessages = appData.messages
             syncSessions = appData.sessions
+            messageSummaries = appData.summaries
             updateStatistics()
+            isLoading = false
+            
+            // Success feedback
+            print("Successfully imported \(appData.messages.count) messages, \(appData.sessions.count) sessions, and \(appData.summaries.count) summaries")
         } catch {
             errorMessage = "Failed to import data: \(error.localizedDescription)"
+            isLoading = false
         }
     }
 }

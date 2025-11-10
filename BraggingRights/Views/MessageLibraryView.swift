@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MessageLibraryView: View {
     @ObservedObject var viewModel: AppViewModel
@@ -34,6 +35,23 @@ struct MessageLibraryView: View {
             headerView
             
             Divider()
+            
+            // Error/Success messages
+            if let error = viewModel.errorMessage {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                    Text(error)
+                        .font(.caption)
+                    Spacer()
+                    Button("Dismiss") {
+                        viewModel.errorMessage = nil
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(8)
+                .background(Color.red.opacity(0.1))
+            }
             
             // Filters and search
             filterBar
@@ -75,6 +93,28 @@ struct MessageLibraryView: View {
             
             // Action buttons
             HStack(spacing: 12) {
+                // Backup/Import buttons
+                Menu {
+                    Button(action: {
+                        exportData()
+                    }) {
+                        Label("Export Backup", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(viewModel.allMessages.isEmpty)
+                    
+                    Button(action: {
+                        importData()
+                    }) {
+                        Label("Import Backup", systemImage: "square.and.arrow.down")
+                    }
+                } label: {
+                    Label("Backup", systemImage: "externaldrive")
+                }
+                .menuStyle(.borderlessButton)
+                
+                Divider()
+                    .frame(height: 20)
+                
                 if !selectedMessages.isEmpty {
                     Button(action: {
                         showDeleteConfirmation = true
@@ -299,6 +339,40 @@ struct MessageLibraryView: View {
     private func deleteSelectedMessages() {
         viewModel.deleteMessages(Array(selectedMessages))
         selectedMessages.removeAll()
+    }
+    
+    private func exportData() {
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.json]
+        savePanel.nameFieldStringValue = "bragging-rights-backup-\(formatDateForFilename(Date())).json"
+        savePanel.title = "Export Backup"
+        savePanel.message = "Export all messages, sessions, and summaries to a backup file"
+        
+        savePanel.begin { response in
+            if response == .OK, let url = savePanel.url {
+                viewModel.exportData(to: url)
+            }
+        }
+    }
+    
+    private func importData() {
+        let openPanel = NSOpenPanel()
+        openPanel.allowedContentTypes = [.json]
+        openPanel.allowsMultipleSelection = false
+        openPanel.title = "Import Backup"
+        openPanel.message = "Select a backup file to import"
+        
+        openPanel.begin { response in
+            if response == .OK, let url = openPanel.urls.first {
+                viewModel.importData(from: url)
+            }
+        }
+    }
+    
+    private func formatDateForFilename(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmm"
+        return formatter.string(from: date)
     }
 }
 
