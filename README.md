@@ -40,6 +40,9 @@ Your data belongs to you. BraggingRights stores all imported messages locally on
     ```
 3.  Build and Run (Cmd+R).
 
+## Distribution 
+For now I don't have any plans for releasing pre-built versions of this app or an AppStore/TestFlight release, but that might change in the future if people ask for it
+
 ## License & Usage Restrictions
 
 **Strictly Non-Commercial & No Derivative Works**
